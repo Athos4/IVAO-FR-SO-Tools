@@ -424,7 +424,7 @@
 
     .zone-cell,
     .timeline-row {
-      min-height: 66px;
+      min-height: 27px;
       border-bottom: 1px solid var(--line);
       border-right: 1px solid var(--line);
     }
@@ -440,7 +440,7 @@
       min-width: 82px;
       max-width: 180px;
       height: 100%;
-      padding: 10px 12px;
+      padding: 4px 10px;
       border-top: 0;
       border-left: 0;
       color: var(--text);
@@ -490,14 +490,14 @@
     .planner-event {
       position: absolute;
       z-index: 3;
-      height: 23px;
+      height: 16px;
       min-width: 3px;
       display: flex;
       align-items: center;
       overflow: hidden;
       padding: 0;
       border: 1px solid color-mix(in srgb, currentColor 32%, transparent);
-      border-radius: 5px;
+      border-radius: 4px;
       color: var(--blue);
       background: color-mix(in srgb, currentColor 13%, #0a1424);
       box-shadow: 0 3px 9px rgba(0,0,0,.2);
@@ -511,10 +511,10 @@
     .planner-event.active-event { border-color: var(--green); box-shadow: 0 0 0 1px rgba(57,217,138,.26), 0 0 18px rgba(57,217,138,.14); }
     .request-band {
       position: absolute;
-      top: 21px;
+      top: 4px;
       right: 12px;
       left: 12px;
-      height: 24px;
+      height: 19px;
       display: flex;
       align-items: center;
       justify-content: center;
@@ -523,7 +523,7 @@
       border-radius: 5px;
       color: #526178;
       background: rgba(148,163,184,.025);
-      font-size: 9px;
+      font-size: 8px;
       font-weight: 760;
       text-transform: uppercase;
       letter-spacing: .09em;
@@ -615,7 +615,8 @@
     .map-zone-dot { flex: 0 0 7px; width: 7px; height: 7px; border-radius: 2px; border: 1px solid currentColor; background: currentColor; box-shadow: 0 0 0 3px color-mix(in srgb, currentColor 11%, transparent); }
     .map-zone-button span:last-child { min-width: 0; overflow: hidden; color: #c9d3e0; text-overflow: ellipsis; white-space: nowrap; }
     .overview-map-shell { position: relative; min-width: 0; overflow: hidden; background: #07101c; }
-    .overview-map { position: absolute; inset: 0; overflow: hidden; }
+    .overview-map { position: absolute; inset: 0; overflow: hidden; cursor: grab; user-select: none; touch-action: none; }
+    .overview-map.dragging { cursor: grabbing; }
     .overview-map-message {
       position: absolute;
       z-index: 6;
@@ -649,6 +650,18 @@
       font-weight: 790;
       letter-spacing: .05em;
       text-transform: uppercase;
+    }
+    .overview-map-help {
+      position: absolute;
+      z-index: 7;
+      bottom: 8px;
+      left: 8px;
+      padding: 4px 7px;
+      border-radius: 5px;
+      color: #8998ad;
+      background: rgba(8,17,31,.84);
+      font-size: 8px;
+      pointer-events: none;
     }
     .multi-zone-path { stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; filter: drop-shadow(0 0 4px rgba(0,0,0,.7)); }
 
@@ -1446,7 +1459,7 @@
         const eventEnd = new Date(state.weekStart.getTime() + event.end * 60000);
         const active = now >= eventStart && now < eventEnd;
         const label = slotLabel(event.slot);
-        return `<button class="planner-event ${typeClass(zone.type)}${active ? " active-event" : ""}" type="button" data-zone-id="${zone.id}" style="left:${left.toFixed(4)}%;width:${width.toFixed(4)}%;top:${10 + event.lane * 28}px" title="${escapeHtml(zone.name)} · ${escapeHtml(label)} UTC" aria-label="${escapeHtml(zone.name)}, ${escapeHtml(label)} UTC"></button>`;
+        return `<button class="planner-event ${typeClass(zone.type)}${active ? " active-event" : ""}" type="button" data-zone-id="${zone.id}" style="left:${left.toFixed(4)}%;width:${width.toFixed(4)}%;top:${4 + event.lane * 19}px" title="${escapeHtml(zone.name)} · ${escapeHtml(label)} UTC" aria-label="${escapeHtml(zone.name)}, ${escapeHtml(label)} UTC"></button>`;
       }
 
       function renderCalendar() {
@@ -1474,7 +1487,7 @@
 
         state.filtered.forEach(zone => {
           const planner = buildPlannerEvents(zone);
-          const rowHeight = planner.events.length ? Math.max(66, 20 + planner.lanes * 28) : 66;
+          const rowHeight = planner.events.length ? Math.max(27, 8 + planner.lanes * 19) : 27;
           html += `<button class="zone-cell ${typeClass(zone.type)}" type="button" data-zone-id="${zone.id}" style="min-height:${rowHeight}px" aria-label="Voir le détail de ${escapeHtml(zone.name)}"><span class="zone-copy"><strong>${escapeHtml(zone.name)}</strong></span></button>`;
 
           html += `<div class="timeline-row" style="min-height:${rowHeight}px">`;
@@ -1525,6 +1538,7 @@
               </button>
             </div>
             <div class="overview-map-message${selected.size ? " hidden" : ""}" id="overviewMapMessage"><strong>Sélectionnez une ou plusieurs zones</strong>Leurs emprises IVAO seront superposées sur la carte.</div>
+            <span class="overview-map-help">Glisser pour déplacer · Molette pour zoomer</span>
             <span class="map-attribution">© <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> · © <a href="https://carto.com/attributions" target="_blank" rel="noopener noreferrer">CARTO</a></span>
           </div>`;
 
@@ -1572,12 +1586,17 @@
         };
       }
 
+      function unprojectMercator(pixel, zoom) {
+        const worldSize = 256 * Math.pow(2, zoom);
+        const longitude = pixel.x / worldSize * 360 - 180;
+        const mercatorY = Math.PI - 2 * Math.PI * pixel.y / worldSize;
+        return {
+          lat: 180 / Math.PI * Math.atan(Math.sinh(mercatorY)),
+          lng: ((longitude + 540) % 360) - 180
+        };
+      }
+
       function fittedMapView(points, width, height) {
-        const minLat = Math.min(...points.map(point => point.lat));
-        const maxLat = Math.max(...points.map(point => point.lat));
-        const minLng = Math.min(...points.map(point => point.lng));
-        const maxLng = Math.max(...points.map(point => point.lng));
-        const center = { lat: (minLat + maxLat) / 2, lng: (minLng + maxLng) / 2 };
         let zoom = 13;
         for (; zoom > 2; zoom -= 1) {
           const projected = points.map(point => projectMercator(point, zoom));
@@ -1585,6 +1604,12 @@
           const spanY = Math.max(...projected.map(point => point.y)) - Math.min(...projected.map(point => point.y));
           if (spanX <= width - 64 && spanY <= height - 64) break;
         }
+        const projected = points.map(point => projectMercator(point, zoom));
+        const centerPixel = {
+          x: (Math.min(...projected.map(point => point.x)) + Math.max(...projected.map(point => point.x))) / 2,
+          y: (Math.min(...projected.map(point => point.y)) + Math.max(...projected.map(point => point.y))) / 2
+        };
+        const center = unprojectMercator(centerPixel, zoom);
         return { center, zoom };
       }
 
@@ -1628,6 +1653,77 @@
         container.innerHTML = `${tiles}<svg class="map-overlay" viewBox="0 0 ${width} ${height}" aria-hidden="true">${paths}</svg>`;
       }
 
+      function bindOverviewMapInteractions(container) {
+        if (container.dataset.interactionsBound === "true") return;
+        container.dataset.interactionsBound = "true";
+        let drag = null;
+        let renderFrame = null;
+        let lastWheelAt = 0;
+
+        const requestMapRender = () => {
+          if (renderFrame !== null) return;
+          renderFrame = requestAnimationFrame(() => {
+            renderFrame = null;
+            renderOverviewMap();
+          });
+        };
+
+        container.addEventListener("pointerdown", event => {
+          if (event.button !== 0 || !overviewMapState) return;
+          const centerPixel = projectMercator(overviewMapState.center, overviewMapState.zoom);
+          drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, centerPixel };
+          container.setPointerCapture(event.pointerId);
+          container.classList.add("dragging");
+          event.preventDefault();
+        });
+
+        container.addEventListener("pointermove", event => {
+          if (!drag || drag.pointerId !== event.pointerId || !overviewMapState) return;
+          overviewMapState.center = unprojectMercator({
+            x: drag.centerPixel.x - (event.clientX - drag.x),
+            y: drag.centerPixel.y - (event.clientY - drag.y)
+          }, overviewMapState.zoom);
+          requestMapRender();
+        });
+
+        const stopDragging = event => {
+          if (!drag || drag.pointerId !== event.pointerId) return;
+          drag = null;
+          container.classList.remove("dragging");
+          if (container.hasPointerCapture(event.pointerId)) container.releasePointerCapture(event.pointerId);
+        };
+        container.addEventListener("pointerup", stopDragging);
+        container.addEventListener("pointercancel", stopDragging);
+
+        container.addEventListener("wheel", event => {
+          if (!overviewMapState) return;
+          event.preventDefault();
+          const now = performance.now();
+          if (now - lastWheelAt < 90) return;
+          lastWheelAt = now;
+          const previousZoom = overviewMapState.zoom;
+          const nextZoom = Math.max(2, Math.min(16, previousZoom + (event.deltaY < 0 ? 1 : -1)));
+          if (nextZoom === previousZoom) return;
+
+          const rect = container.getBoundingClientRect();
+          const pointer = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+          const previousCenter = projectMercator(overviewMapState.center, previousZoom);
+          const previousOrigin = { x: previousCenter.x - rect.width / 2, y: previousCenter.y - rect.height / 2 };
+          const scale = Math.pow(2, nextZoom - previousZoom);
+          const nextPointerWorld = {
+            x: (previousOrigin.x + pointer.x) * scale,
+            y: (previousOrigin.y + pointer.y) * scale
+          };
+          const nextCenterPixel = {
+            x: nextPointerWorld.x - pointer.x + rect.width / 2,
+            y: nextPointerWorld.y - pointer.y + rect.height / 2
+          };
+          overviewMapState.zoom = nextZoom;
+          overviewMapState.center = unprojectMercator(nextCenterPixel, nextZoom);
+          requestMapRender();
+        }, { passive: false });
+      }
+
       function initOverviewMap(fitToSelection = false) {
         const container = document.getElementById("overviewMap");
         if (!container) return;
@@ -1637,6 +1733,7 @@
         const keepView = !fitToSelection && overviewMapState && overviewMapState.container === container;
         const view = keepView ? { center: overviewMapState.center, zoom: overviewMapState.zoom } : fittedMapView(fitPoints, container.clientWidth || 900, container.clientHeight || 650);
         overviewMapState = { container, shapes, center: view.center, zoom: view.zoom };
+        bindOverviewMapInteractions(container);
         renderOverviewMap();
 
         if (overviewMapResizeObserver) overviewMapResizeObserver.disconnect();
