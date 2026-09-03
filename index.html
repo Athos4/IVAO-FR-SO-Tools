@@ -829,6 +829,7 @@
     .radar-loader::after { content: ""; position: absolute; inset: 27px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
     .loader span { color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
 
+    .hidden { display: none !important; }
     .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 
     @keyframes spin { to { transform: rotate(360deg); } }
@@ -1015,6 +1016,7 @@
       "use strict";
 
       const API_BASE = "https://api.ivao.aero/v2";
+      const CARTO_BASEMAP_KEY = "cb1_271g_1_b5a7d0492285c52bd2d6eecf";
       const CACHE_KEY = "ivao-fr-special-areas-v4";
       const CACHE_TTL = 30 * 60 * 1000;
       const CENTER_GROUPS = {
@@ -1586,6 +1588,80 @@
         return { center, zoom };
       }
 
+      function renderOverviewMap() {
+        if (!overviewMapState?.container?.isConnected) return;
+        const { container, shapes, center, zoom } = overviewMapState;
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+        if (!width || !height) return;
+
+        const centerPixel = projectMercator(center, zoom);
+        const origin = { x: centerPixel.x - width / 2, y: centerPixel.y - height / 2 };
+        const tileSize = 256;
+        const tileCount = Math.pow(2, zoom);
+        const firstX = Math.floor(origin.x / tileSize);
+        const lastX = Math.floor((origin.x + width) / tileSize);
+        const firstY = Math.max(0, Math.floor(origin.y / tileSize));
+        const lastY = Math.min(tileCount - 1, Math.floor((origin.y + height) / tileSize));
+        const servers = ["a", "b", "c", "d"];
+        let tiles = "";
+
+        for (let y = firstY; y <= lastY; y += 1) {
+          for (let x = firstX; x <= lastX; x += 1) {
+            const wrappedX = ((x % tileCount) + tileCount) % tileCount;
+            const server = servers[Math.abs(x + y) % servers.length];
+            const left = x * tileSize - origin.x;
+            const top = y * tileSize - origin.y;
+            tiles += `<img class="map-tile" src="https://${server}.basemaps.cartocdn.com/dark_all/${zoom}/${wrappedX}/${y}@2x.png?key=${encodeURIComponent(CARTO_BASEMAP_KEY)}" alt="" draggable="false" style="left:${left.toFixed(2)}px;top:${top.toFixed(2)}px">`;
+          }
+        }
+
+        const paths = shapes.map(shape => {
+          const path = shape.points.map((point, index) => {
+            const pixel = projectMercator(point, zoom);
+            return `${index ? "L" : "M"}${(pixel.x - origin.x).toFixed(2)} ${(pixel.y - origin.y).toFixed(2)}`;
+          }).join(" ") + " Z";
+          const color = zoneMapColor(shape.zone.type);
+          return `<path class="multi-zone-path" d="${path}" fill="${color}2b" stroke="${color}"><title>${escapeHtml(shape.zone.name)}</title></path>`;
+        }).join("");
+
+        container.innerHTML = `${tiles}<svg class="map-overlay" viewBox="0 0 ${width} ${height}" aria-hidden="true">${paths}</svg>`;
+      }
+
+      function initOverviewMap(fitToSelection = false) {
+        const container = document.getElementById("overviewMap");
+        if (!container) return;
+        const shapes = selectedMapZones().map(zone => ({ zone, points: mapPointsForZone(zone) })).filter(shape => shape.points.length >= 2);
+        const defaultFranceBounds = [{ lat: 41, lng: -5.5 }, { lat: 51.6, lng: 9.8 }];
+        const fitPoints = shapes.length ? shapes.flatMap(shape => shape.points) : defaultFranceBounds;
+        const keepView = !fitToSelection && overviewMapState && overviewMapState.container === container;
+        const view = keepView ? { center: overviewMapState.center, zoom: overviewMapState.zoom } : fittedMapView(fitPoints, container.clientWidth || 900, container.clientHeight || 650);
+        overviewMapState = { container, shapes, center: view.center, zoom: view.zoom };
+        renderOverviewMap();
+
+        if (overviewMapResizeObserver) overviewMapResizeObserver.disconnect();
+        if ("ResizeObserver" in window) {
+          overviewMapResizeObserver = new ResizeObserver(renderOverviewMap);
+          overviewMapResizeObserver.observe(container);
+        }
+      }
+
+      function refreshOverviewSelection() {
+        const selected = new Set(selectedMapZones().map(zone => zone.id));
+        els.mapMode.querySelectorAll("[data-map-zone-id]").forEach(button => {
+          const active = selected.has(Number(button.dataset.mapZoneId));
+          button.classList.toggle("selected", active);
+          button.setAttribute("aria-pressed", String(active));
+        });
+        const count = document.getElementById("overviewMapCount");
+        if (count) count.textContent = `${selected.size} zone${selected.size > 1 ? "s" : ""} sélectionnée${selected.size > 1 ? "s" : ""}`;
+        const clear = els.mapMode.querySelector("[data-map-clear]");
+        if (clear) clear.disabled = !selected.size;
+        const message = document.getElementById("overviewMapMessage");
+        if (message) message.classList.toggle("hidden", Boolean(selected.size));
+        initOverviewMap(true);
+      }
+
       function renderZoneMap() {
         if (!mapState?.container?.isConnected || mapState.points.length < 2) return;
         const { container, points, center, zoom } = mapState;
@@ -1610,7 +1686,7 @@
             const server = servers[Math.abs(x + y) % servers.length];
             const left = x * tileSize - origin.x;
             const top = y * tileSize - origin.y;
-            tiles += `<img class="map-tile" src="https://${server}.basemaps.cartocdn.com/dark_all/${zoom}/${wrappedX}/${y}@2x.png" alt="" draggable="false" style="left:${left.toFixed(2)}px;top:${top.toFixed(2)}px">`;
+            tiles += `<img class="map-tile" src="https://${server}.basemaps.cartocdn.com/dark_all/${zoom}/${wrappedX}/${y}@2x.png?key=${encodeURIComponent(CARTO_BASEMAP_KEY)}" alt="" draggable="false" style="left:${left.toFixed(2)}px;top:${top.toFixed(2)}px">`;
           }
         }
 
@@ -1728,14 +1804,14 @@
       function shiftWeek(days) {
         state.weekStart = addUtcDays(state.weekStart, days);
         renderWeekLabel();
-        renderCalendar();
+        renderCurrentView();
         els.calendarScroll.scrollTop = 0;
       }
 
       function bindEvents() {
         els.previousWeek.addEventListener("click", () => shiftWeek(-7));
         els.nextWeek.addEventListener("click", () => shiftWeek(7));
-        els.todayButton.addEventListener("click", () => { state.weekStart = startOfUtcWeek(new Date()); renderWeekLabel(); renderCalendar(); });
+        els.todayButton.addEventListener("click", () => { state.weekStart = startOfUtcWeek(new Date()); renderWeekLabel(); renderCurrentView(); });
         els.searchInput.addEventListener("input", event => { state.query = event.target.value; renderAll(); });
         els.regionSelect.addEventListener("change", event => { state.region = event.target.value; renderAll(); });
         els.sortSelect.addEventListener("change", event => { state.sort = event.target.value; renderAll(); });
@@ -1751,10 +1827,36 @@
           });
           renderAll();
         });
+        els.mapModeButton.addEventListener("click", () => {
+          state.view = state.view === "map" ? "planning" : "map";
+          renderCurrentView();
+        });
         els.refreshButton.addEventListener("click", () => loadZones({ force: true }));
         els.calendarGrid.addEventListener("click", event => {
           const target = event.target.closest("[data-zone-id]");
           if (target) openDrawer(target.dataset.zoneId);
+        });
+        els.mapMode.addEventListener("click", event => {
+          const zoneButton = event.target.closest("[data-map-zone-id]");
+          if (zoneButton) {
+            const id = Number(zoneButton.dataset.mapZoneId);
+            if (state.mapSelection.has(id)) state.mapSelection.delete(id);
+            else state.mapSelection.add(id);
+            refreshOverviewSelection();
+            return;
+          }
+          if (event.target.closest("[data-map-clear]")) {
+            state.mapSelection.clear();
+            refreshOverviewSelection();
+            return;
+          }
+          const zoomButton = event.target.closest("[data-overview-zoom]");
+          if (zoomButton && overviewMapState) {
+            overviewMapState.zoom = Math.max(2, Math.min(16, overviewMapState.zoom + Number(zoomButton.dataset.overviewZoom)));
+            renderOverviewMap();
+            return;
+          }
+          if (event.target.closest("[data-overview-fit]")) initOverviewMap(true);
         });
         els.drawerClose.addEventListener("click", closeDrawer);
         els.scrim.addEventListener("click", closeDrawer);
@@ -1769,7 +1871,7 @@
       bindEvents();
       updateClock();
       setInterval(updateClock, 1000);
-      setInterval(() => { if (state.zones.length) { renderStats(); renderCalendar(); } }, 60000);
+      setInterval(() => { if (state.zones.length && state.view === "planning") renderCalendar(); }, 60000);
       loadZones();
     })();
   </script>
